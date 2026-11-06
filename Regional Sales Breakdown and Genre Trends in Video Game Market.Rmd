@@ -1,0 +1,298 @@
+---
+title: "Regional Sales Breakdown and Genre Trends in Video Game Market"
+author: "Azer Ezizov"
+date: "`r format(Sys.Date(), '%d %b %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+
+
+## Setup 
+
+```{r setup, error=FALSE, message=FALSE, warning=FALSE, echo=TRUE, include=TRUE}
+library(tidyverse)
+library(scales)
+
+dir.create("plots", showWarnings = FALSE)
+
+df <- read_csv("vgsales.csv",
+               na = c("", "NA", "N/A"),
+               show_col_types = FALSE)
+```
+
+## Task 1
+
+```{r task1, error=FALSE, message=FALSE, warning=FALSE, echo=TRUE, include=TRUE}
+dim(df)
+glimpse(df)
+colSums(is.na(df))
+```
+
+## Task Təmizləmə 
+
+```{r task2, error=FALSE, message=FALSE, warning=FALSE, echo=TRUE, include=TRUE}
+rows_raw <- nrow(df)
+
+df <- df %>%
+  filter(!is.na(Year)) %>%
+  mutate(Year      = as.integer(Year),
+         Publisher = replace_na(Publisher, "Unknown"))
+
+cat("Silinən sətir sayı:", rows_raw - nrow(df), "\n")
+cat("Qalan sətir sayı:  ", nrow(df), "\n")
+colSums(is.na(df))
+```
+
+## Task 3
+
+**Genre, Platform və Publisher üzrə qlobal satış (top 10).**
+```{r task3, error=FALSE, message=FALSE, warning=FALSE, echo=TRUE, include=TRUE}
+top_genre <- df %>%
+  group_by(Genre) %>%
+  summarise(Global_Sales = sum(Global_Sales), .groups = "drop") %>%
+  arrange(desc(Global_Sales)) %>%
+  slice_head(n = 10)
+
+top_platform <- df %>%
+  group_by(Platform) %>%
+  summarise(Global_Sales = sum(Global_Sales), .groups = "drop") %>%
+  arrange(desc(Global_Sales)) %>%
+  slice_head(n = 10)
+
+top_publisher <- df %>%
+  group_by(Publisher) %>%
+  summarise(Global_Sales = sum(Global_Sales), .groups = "drop") %>%
+  arrange(desc(Global_Sales)) %>%
+  slice_head(n = 10)
+
+print(top_genre)
+print(top_platform)
+print(top_publisher)
+```
+
+## Task 4
+
+**Ümumi regional paylar:** 
+
+```{r task4, error=FALSE, message=FALSE, warning=FALSE, echo=TRUE, include=TRUE}
+region_total <- df %>%
+  summarise(across(c(NA_Sales, EU_Sales, JP_Sales, Other_Sales, Global_Sales), sum))
+
+region_share <- region_total %>%
+  mutate(NA_pct    = NA_Sales    / Global_Sales * 100,
+         EU_pct    = EU_Sales    / Global_Sales * 100,
+         JP_pct    = JP_Sales    / Global_Sales * 100,
+         Other_pct = Other_Sales / Global_Sales * 100) %>%
+  select(ends_with("_pct")) %>%
+  mutate(across(everything(), ~ round(.x, 1)))
+
+print(region_share)
+```
+
+## Task 5
+
+**Janr üzrə regional müqayisə:** =
+
+```{r task5, error=FALSE, message=FALSE, warning=FALSE, echo=TRUE, include=TRUE}
+genre_region <- df %>%
+  group_by(Genre) %>%
+  summarise(across(c(NA_Sales, EU_Sales, JP_Sales, Other_Sales, Global_Sales), sum),
+            .groups = "drop") %>%
+  mutate(NA_pct = NA_Sales / Global_Sales * 100,
+         EU_pct = EU_Sales / Global_Sales * 100,
+         JP_pct = JP_Sales / Global_Sales * 100)
+
+genre_region %>%
+  select(Genre, NA_pct, EU_pct, JP_pct) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 1))) %>%
+  arrange(desc(JP_pct))
+```
+
+## Task 6
+
+**Hər regionda ən populyar janr** 
+
+```{r task6, error=FALSE, message=FALSE, warning=FALSE, echo=TRUE, include=TRUE}
+genre_region %>%
+  summarise(NA_top = Genre[which.max(NA_Sales)],
+            EU_top = Genre[which.max(EU_Sales)],
+            JP_top = Genre[which.max(JP_Sales)])
+
+genre_region %>%
+  pivot_longer(c(NA_Sales, EU_Sales, JP_Sales), names_to = "Region", values_to = "Sales") %>%
+  group_by(Region) %>%
+  mutate(Share_in_region = round(Sales / sum(Sales) * 100, 1)) %>%
+  slice_max(Sales, n = 3) %>%
+  select(Region, Genre, Sales, Share_in_region)
+```
+
+## Task 7
+
+**İllik trend (1980–2016).** 
+
+```{r task7, error=FALSE, message=FALSE, warning=FALSE, echo=TRUE, include=TRUE}
+yearly <- df %>%
+  filter(Year >= 1980, Year <= 2016) %>%
+  group_by(Year) %>%
+  summarise(Global_Sales = sum(Global_Sales), .groups = "drop")
+
+peak <- yearly %>% slice_max(Global_Sales, n = 1)
+
+print(yearly, n = 40)
+print(peak)
+```
+
+## Task 8
+
+**Ən çox satan 10 oyun**
+
+```{r task8, error=FALSE, message=FALSE, warning=FALSE, echo=TRUE, include=TRUE}
+top_games <- df %>%
+  arrange(desc(Global_Sales)) %>%
+  slice_head(n = 10) %>%
+  select(Name, Platform, Genre, Year, Global_Sales)
+
+print(top_games)
+```
+
+## Task 9
+
+**Vizuallaşdırma 1: stacked bar chart.** Janr üzrə regional satış (NA, EU, JP, Other).
+
+```{r task9, error=FALSE, message=FALSE, warning=FALSE, echo=TRUE, include=TRUE}
+genre_long <- genre_region %>%
+  select(Genre, NA_Sales, EU_Sales, JP_Sales, Other_Sales) %>%
+  pivot_longer(-Genre, names_to = "Region", values_to = "Sales") %>%
+  mutate(Region = str_remove(Region, "_Sales"),
+         Region = factor(Region, levels = c("NA", "EU", "JP", "Other")))
+
+p1 <- ggplot(genre_long,
+             aes(x = reorder(Genre, Sales, FUN = sum), y = Sales, fill = Region)) +
+  geom_col() +
+  coord_flip() +
+  labs(title = "Regional Sales by Genre (stacked)",
+       x = "Genre", y = "Sales (million units)", fill = "Region") +
+  theme_minimal(base_size = 12)
+
+print(p1)
+ggsave("plots/01_stacked_genre_region.png", p1, width = 9, height = 6, dpi = 150)
+```
+
+## Task 10
+
+**Vizuallaşdırma 2: illik trend xətti.** Qlobal satışın 1980–2016 dövründəki dəyişməsi, pik il qırmızı ilə işarələnib.
+
+```{r task10, error=FALSE, message=FALSE, warning=FALSE, echo=TRUE, include=TRUE}
+p2 <- ggplot(yearly, aes(x = Year, y = Global_Sales)) +
+  geom_line(linewidth = 1, color = "steelblue") +
+  geom_point(color = "steelblue") +
+  geom_point(data = peak, color = "red", size = 3) +
+  geom_text(data = peak,
+            aes(label = paste0(Year, ": ", round(Global_Sales, 1), "M")),
+            vjust = -1, color = "red") +
+  scale_x_continuous(breaks = seq(1980, 2015, 5)) +
+  labs(title = "Global Video Game Sales per Year (1980-2016)",
+       x = "Year", y = "Global sales (million units)") +
+  theme_minimal(base_size = 12)
+
+print(p2)
+ggsave("plots/02_yearly_trend.png", p2, width = 9, height = 5, dpi = 150)
+```
+
+## Task 11
+
+**Vizuallaşdırma 3: top 10 publisher bar chart.**
+
+```{r task11, error=FALSE, message=FALSE, warning=FALSE, echo=TRUE, include=TRUE}
+p3 <- ggplot(top_publisher,
+             aes(x = reorder(Publisher, Global_Sales), y = Global_Sales)) +
+  geom_col(fill = "darkorange") +
+  geom_text(aes(label = round(Global_Sales)), hjust = -0.1, size = 3.5) +
+  coord_flip() +
+  expand_limits(y = max(top_publisher$Global_Sales) * 1.1) +
+  labs(title = "Top 10 Publishers by Global Sales",
+       x = "Publisher", y = "Global sales (million units)") +
+  theme_minimal(base_size = 12)
+
+print(p3)
+ggsave("plots/03_top10_publishers.png", p3, width = 9, height = 5, dpi = 150)
+```
+
+## Task 12
+
+**Bonus 1: hansı onillikdə oyun başına orta satış ən yüksəkdir?**
+
+```{r task12, error=FALSE, message=FALSE, warning=FALSE, echo=TRUE, include=TRUE}
+decade_avg <- df %>%
+  filter(Year >= 1980, Year <= 2016) %>%
+  mutate(Decade = paste0(Year %/% 10 * 10, "s")) %>%
+  group_by(Decade) %>%
+  summarise(Avg_Sales_per_Game = mean(Global_Sales),
+            Games = n(),
+            .groups = "drop")
+
+print(decade_avg)
+```
+
+## Task 13
+
+**Bonus 1 qrafiki:** onilliklər üzrə oyun başına orta satış.
+
+```{r task13, error=FALSE, message=FALSE, warning=FALSE, echo=TRUE, include=TRUE}
+p4 <- ggplot(decade_avg, aes(x = Decade, y = Avg_Sales_per_Game)) +
+  geom_col(fill = "seagreen") +
+  geom_text(aes(label = round(Avg_Sales_per_Game, 2)), vjust = -0.5) +
+  labs(title = "Average Global Sales per Game by Decade",
+       x = "Decade", y = "Avg sales per game (million units)") +
+  theme_minimal(base_size = 12)
+
+print(p4)
+ggsave("plots/04_decade_avg.png", p4, width = 7, height = 5, dpi = 150)
+```
+
+## Task 14
+
+**Bonus 2: grouped bar chart.** Qlobal satışa görə top 5 janr NA, EU və JP üzrə yan-yana.
+
+```{r task14, error=FALSE, message=FALSE, warning=FALSE, echo=TRUE, include=TRUE}
+top5_genres <- genre_region %>%
+  slice_max(Global_Sales, n = 5) %>%
+  pull(Genre)
+
+grouped_data <- genre_long %>%
+  filter(Genre %in% top5_genres, Region %in% c("NA", "EU", "JP")) %>%
+  mutate(Genre = factor(Genre, levels = top5_genres))
+
+p5 <- ggplot(grouped_data, aes(x = Genre, y = Sales, fill = Region)) +
+  geom_col(position = "dodge") +
+  labs(title = "Top 5 Genres: NA vs EU vs JP",
+       x = "Genre", y = "Sales (million units)", fill = "Region") +
+  theme_minimal(base_size = 12)
+
+print(p5)
+ggsave("plots/05_grouped_top5_genres.png", p5, width = 9, height = 5, dpi = 150)
+```
+
+## Task 15
+
+**İnsight-lar üçün əlavə analiz:** 
+
+```{r task15, error=FALSE, message=FALSE, warning=FALSE, echo=TRUE, include=TRUE}
+top_pub_region <- df %>%
+  pivot_longer(c(NA_Sales, EU_Sales, JP_Sales), names_to = "Region", values_to = "Sales") %>%
+  group_by(Region, Publisher) %>%
+  summarise(Sales = sum(Sales), .groups = "drop_last") %>%
+  slice_max(Sales, n = 3)
+
+top_plat_region <- df %>%
+  pivot_longer(c(NA_Sales, EU_Sales, JP_Sales), names_to = "Region", values_to = "Sales") %>%
+  group_by(Region, Platform) %>%
+  summarise(Sales = sum(Sales), .groups = "drop_last") %>%
+  slice_max(Sales, n = 3)
+
+print(top_pub_region)
+print(top_plat_region)
+```
